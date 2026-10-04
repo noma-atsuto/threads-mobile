@@ -12,7 +12,7 @@
   function countText(text) {
     let n = 0;
     for (const ch of text || '') {
-      n += /\p{Extended_Pictographic}|[‍️\u{1f3fb}-\u{1f3ff}]/u.test(ch) ? new TextEncoder().encode(ch).length : 1;
+      n += /\p{Extended_Pictographic}|[\u200d\ufe0f\u{1f3fb}-\u{1f3ff}]/u.test(ch) ? new TextEncoder().encode(ch).length : 1;
     }
     return n;
   }
@@ -37,6 +37,7 @@
     const sorted = [...(actions || [])].sort((a, b) => String(a.at).localeCompare(String(b.at)));
     for (const a of sorted) {
       if (a.type === 'generate') { generate = true; continue; }
+      if (a.type === 'hello') continue; // iPhoneがつながった合図（投稿には何もしない）
       const p = out.find((x) => x.id === a.post_id);
       const skip = (why) => skipped.push({ id: a.id, why });
       if (!p) { skip('投稿が見つかりません'); continue; }
