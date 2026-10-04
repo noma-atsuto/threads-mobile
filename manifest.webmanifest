@@ -1,7 +1,6 @@
 {
   "name": "Threads予約",
   "short_name": "Threads予約",
-  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f5f6f8",
