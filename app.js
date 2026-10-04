@@ -6,7 +6,6 @@
   'use strict';
   const A = window.ThreadsActions;
   const STORE_KEY = 'threads-mobile';
-  const DEFAULT_REPO = 'noma-atsuto/threads-cloud-poster';
 
   /* ---------- 保存（このiPhoneの中だけ） ---------- */
   function loadCfg() {
@@ -16,6 +15,29 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify(c)); return true; } catch (_) { return false; }
   }
   let cfg = loadCfg();
+
+  // Macのダッシュボードに出るQRコード（…#c=つなぐための文字）から開いたら、そのまま覚える
+  const STANDALONE = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  function readConnectCode(text) {
+    const m = String(text || '').match(/[#&]c=([A-Za-z0-9_-]+)/) || String(text || '').match(/^\s*([A-Za-z0-9_-]{40,})\s*$/);
+    if (!m) return null;
+    try {
+      const j = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))));
+      return j.r && j.t ? { repo: j.r, token: j.t, code: m[1] } : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  let justConnected = false;
+  const fromLink = readConnectCode(location.hash);
+  if (fromLink) {
+    cfg = { repo: fromLink.repo, token: fromLink.token };
+    saveCfg(cfg);
+    justConnected = true;
+    // ホーム画面に追加したアプリは、Safariと保存場所が別になる。追加するときに住所ごと引き継げるよう、
+    // Safariで開いている間は住所を残し、ホーム画面のアプリで開いたときに消す
+    if (STANDALONE) history.replaceState(null, '', location.pathname);
+  }
   // 動作確認用: 手元のテスト用サーバー（localhost）にだけ差し替えられる。合鍵がほかの場所に送られないようにするため
   const hashApi = new URLSearchParams(location.hash.slice(1)).get('api');
   const API = hashApi && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(hashApi) ? hashApi : 'https://api.github.com';
@@ -100,7 +122,7 @@
     } catch (e) {
       D.error = e.message;
       if (!quiet) toast(e.message, true);
-      if (e.status === 401) { cfg.token = ''; saveCfg(cfg); }
+      if (e.status === 401) { cfg = {}; saveCfg(cfg); }
     } finally {
       btn.classList.remove('spinning');
       render();
@@ -154,6 +176,7 @@
     const waiting = posts.filter((p) => p.status === 'rejected' && p.regen === 'waiting').length;
     const gen = (D.actions.items || []).filter((a) => a.type === 'generate' && !(D.state.applied || []).includes(a.id));
     return `
+      ${justConnected && !STANDALONE ? '<div class="banner good">つながりました。共有ボタン（□に↑）から「ホーム画面に追加」すると、アプリのように使えます。</div>' : ''}
       <div class="card">
         <h2>新しい投稿案</h2>
         <div class="muted" style="font-size:13px">投稿案はPCのClaudeが作ります。PCが閉じていても頼んでおけば、PCが起動したときに作り始めます（10〜20分ほど）。</div>
@@ -242,28 +265,22 @@
     </div>
     <div class="card">
       <h2>合鍵</h2>
-      <div class="muted" style="font-size:13px">合鍵（GitHubのアクセストークン）は、このiPhoneの中にだけ保存されています。iPhoneを人に渡すときや、使わなくなったときは消してください。</div>
+      <div class="muted" style="font-size:13px">Macから受け取った合鍵は、このiPhoneの中にだけ保存されています。iPhoneを人に渡すときや、使わなくなったときは消してください。</div>
       <div class="actions"><button class="btn danger" data-logout>このiPhoneから合鍵を消す</button></div>
     </div>`;
 
   views.setup = () => `
     <div class="card">
       <h2>はじめに（1回だけ）</h2>
-      <div class="muted" style="font-size:13px">この画面は、GitHubの非公開の保管場所にある予約を操作します。開くには、GitHubで作る「合鍵（アクセストークン）」が必要です。</div>
-      <ol class="steps" style="margin-top:12px">
-        <li><a class="link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHubの合鍵を作る画面</a>を開く（GitHubにログイン）</li>
-        <li>Token name に <code>Threads予約 iPhone</code>、Expiration は <code>1年</code> など</li>
-        <li>Repository access で <b>Only select repositories</b> を選び、<code>${esc((cfg.repo || DEFAULT_REPO).split('/')[1])}</code> だけを選ぶ</li>
-        <li>Permissions の Repository permissions で、<b>Contents</b> と <b>Actions</b> を <b>Read and write</b> にする</li>
-        <li>いちばん下の <b>Generate token</b> を押し、出てきた合鍵（github_pat_ で始まる文字）をコピーする</li>
-        <li>下に貼り付けて「つなぐ」を押す</li>
+      <ol class="steps">
+        <li>Macでダッシュボードを開き、「設定」の <b>iPhoneとつなぐ</b> で <b>QRコードを表示</b> を押す</li>
+        <li>iPhoneの <b>カメラ</b> でQRコードを読み、出てきたリンクをタップする（Safariで開きます）</li>
+        <li>つながったら、共有ボタンから <b>ホーム画面に追加</b> を押す</li>
       </ol>
-      <label class="f" for="setupRepo">保管場所</label>
-      <input class="field" id="setupRepo" value="${esc(cfg.repo || DEFAULT_REPO)}" autocapitalize="off" autocorrect="off" spellcheck="false">
-      <label class="f" for="setupToken">合鍵（アクセストークン）</label>
-      <input class="field" id="setupToken" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="github_pat_…">
+      <div class="note">${STANDALONE ? 'ホーム画面から開いたときにつながっていない場合は、いったんこのアプリを消して、SafariでQRコードから開き直してから追加してください。' : 'QRコードが読めないときは、Macで「リンクをコピー」を押し、下に貼り付けてください。'}</div>
+      <label class="f" for="setupCode">つなぐためのリンク（QRコードが読めないとき）</label>
+      <input class="field" id="setupCode" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…#c=…">
       <div class="actions"><button class="btn primary block" data-connect>つなぐ</button></div>
-      <div class="note">合鍵はこのiPhoneの中にだけ保存され、GitHub以外には送りません。つないだら、共有ボタンから「ホーム画面に追加」するとアプリのように使えます。</div>
     </div>`;
 
   function render() {
@@ -418,27 +435,27 @@
     if (d.generate !== undefined) return act({ type: 'generate' }, 'PCが起動したら投稿案を作り始めます');
     if (d.logout !== undefined) {
       if (!confirm('このiPhoneから合鍵を消します。もう一度使うときは、合鍵を作り直して登録します。よろしいですか？')) return;
-      cfg = { repo: cfg.repo };
+      cfg = {};
       saveCfg(cfg);
+      history.replaceState(null, '', location.pathname);
       D.state = null;
       return render();
     }
     if (d.connect !== undefined) {
-      const repo = document.getElementById('setupRepo').value.trim();
-      const token = document.getElementById('setupToken').value.trim();
-      if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast('保管場所は「持ち主/名前」の形で入れてください', true);
-      if (!token) return toast('合鍵を貼り付けてください', true);
-      cfg = { repo, token };
+      const found = readConnectCode(document.getElementById('setupCode').value);
+      if (!found) return toast('リンクが読めません。Macの「リンクをコピー」で出た文字を、全部貼り付けてください', true);
+      cfg = { repo: found.repo, token: found.token };
       el.disabled = true;
       try {
         const s = await getFile('data/state.json');
         if (!s) throw new Error('保管場所に投稿一覧が見つかりません。PCのダッシュボードを一度開いてから、もう一度お試しください');
         if (!saveCfg(cfg)) toast('このiPhoneに保存できませんでした（プライベートブラウズでは保存されません）', true);
         current = 'drafts';
+        if (!STANDALONE) history.replaceState(null, '', `${location.pathname}#c=${found.code || ''}`);
         await load();
         toast('つながりました');
       } catch (err) {
-        cfg = { repo };
+        cfg = {};
         toast(err.message, true);
         render();
       } finally {
