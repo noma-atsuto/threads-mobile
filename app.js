@@ -119,6 +119,10 @@
       D.loadedAt = new Date();
       D.error = null;
       compute();
+      // Macに「iPhoneとつながった」と知らせる（QRコードを出し続けないため）。1回だけ
+      if (!cfg.hello) {
+        addAction({ type: 'hello' }).then(() => { cfg.hello = true; saveCfg(cfg); compute(); render(); }).catch(() => {});
+      }
     } catch (e) {
       D.error = e.message;
       if (!quiet) toast(e.message, true);
@@ -273,7 +277,7 @@
     <div class="card">
       <h2>はじめに（1回だけ）</h2>
       <ol class="steps">
-        <li>Macでダッシュボードを開き、「設定」の <b>iPhoneとつなぐ</b> で <b>QRコードを表示</b> を押す</li>
+        <li>Macでダッシュボードを開く（ホーム画面に <b>iPhoneとつなぐ</b> のQRコードが出ています）</li>
         <li>iPhoneの <b>カメラ</b> でQRコードを読み、出てきたリンクをタップする（Safariで開きます）</li>
         <li>つながったら、共有ボタンから <b>ホーム画面に追加</b> を押す</li>
       </ol>
