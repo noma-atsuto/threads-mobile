@@ -28,16 +28,32 @@
   const clone = (v) => JSON.parse(JSON.stringify(v));
 
   // 操作を順に当てはめる。当てはめられない操作（すでに投稿済みなど）は飛ばす。
-  // 戻り値: items（当てはめ後の投稿一覧）、feedback（記録するダメ出し）、generate（投稿案づくりを頼まれたか）、skipped（飛ばした操作）
+  // 戻り値: items（当てはめ後の投稿一覧）、feedback（記録するダメ出し）、generate（投稿案づくりを頼まれたか）、
+  //         registered（クラウドがフィードバックデータベースに登録済みのダメ出しのID）、skipped（飛ばした操作）
   function applyActions(items, actions) {
     const out = clone(items || []);
     const feedback = [];
     const skipped = [];
     let generate = false;
+    const registered = [];
     const sorted = [...(actions || [])].sort((a, b) => String(a.at).localeCompare(String(b.at)));
     for (const a of sorted) {
       if (a.type === 'generate') { generate = true; continue; }
       if (a.type === 'hello') continue; // iPhoneがつながった合図（投稿には何もしない）
+      // クラウドのClaudeが作った投稿案を追加する（作り直しなら、元の投稿を「作り直し済み」にする）
+      if (a.type === 'add_drafts') {
+        for (const d of a.items || []) {
+          if (!d.id || !d.text || out.some((x) => x.id === d.id)) continue;
+          out.push({ ...d, status: 'draft', created_at: d.created_at || a.at });
+          const orig = d.replaces && out.find((x) => x.id === d.replaces);
+          if (orig) {
+            orig.regen = 'done';
+            orig.regenerated_to = [...(orig.regenerated_to || []), d.id];
+          }
+        }
+        registered.push(...(a.registered_feedback || []));
+        continue;
+      }
       const p = out.find((x) => x.id === a.post_id);
       const skip = (why) => skipped.push({ id: a.id, why });
       if (!p) { skip('投稿が見つかりません'); continue; }
@@ -64,7 +80,7 @@
           Object.assign(p, { status: 'approved', scheduled_at: when.toISOString(), approved_at: a.at, error: null });
           // 本人が手直ししてから承認した投稿は、直し方そのものがフィードバックになる
           if (p.edited && p.original_text && !p.edit_recorded && p.original_text !== p.text) {
-            feedback.push({ action_id: a.id, kind: '手直し', post_id: p.id, text: p.text, before: p.original_text, after: p.text, reason: '本人が本文を手直ししてから承認した（元の文と直した後の違いから、直し方のクセを読み取る）' });
+            feedback.push({ id: `fb_${a.id}`, action_id: a.id, kind: '手直し', post_id: p.id, text: p.text, before: p.original_text, after: p.text, reason: '本人が本文を手直ししてから承認した（元の文と直した後の違いから、直し方のクセを読み取る）' });
             p.edit_recorded = true;
           }
           break;
@@ -77,7 +93,7 @@
           if (['posting', 'posted'].includes(p.status)) { skip('投稿済みのものは却下できません'); break; }
           const reason = String(a.reason || '').trim();
           if (!reason) { skip('却下の理由がありません'); break; }
-          feedback.push({ action_id: a.id, kind: '却下', post_id: p.id, text: p.text, reason });
+          feedback.push({ id: `fb_${a.id}`, action_id: a.id, kind: '却下', post_id: p.id, text: p.text, reason });
           Object.assign(p, { status: 'rejected', reject_reason: reason, rejected_at: a.at, scheduled_at: null, regen: a.regen ? 'waiting' : null });
           break;
         }
@@ -92,14 +108,14 @@
           break;
         case 'feedback': {
           const reason = String(a.reason || '').trim();
-          if (reason) feedback.push({ action_id: a.id, kind: 'ダメ出しメモ', post_id: p.id, text: p.text, reason });
+          if (reason) feedback.push({ id: `fb_${a.id}`, action_id: a.id, kind: 'ダメ出しメモ', post_id: p.id, text: p.text, reason });
           break;
         }
         default:
           skip('知らない操作です');
       }
     }
-    return { items: out, feedback, generate, skipped };
+    return { items: out, feedback, generate, registered, skipped };
   }
 
   // クラウドの投稿結果を、表示用に投稿一覧へ重ねる（PCの lib/cloud.js の applyResults と同じ決まり）
