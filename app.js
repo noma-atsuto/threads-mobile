@@ -97,6 +97,13 @@
     if (!res.ok) throw new Error(`投稿係を動かせませんでした（${res.status}）。次の決まった時刻に投稿されます`);
   }
 
+  // 投稿案づくりをクラウドのClaudeに頼む: GitHubに「リリース」を1つ作ると、それを合図にClaudeが動き出す
+  async function startGenerate() {
+    const tag = `gen-${Date.now()}`;
+    const res = await api(`repos/${cfg.repo}/releases`, { method: 'POST', body: JSON.stringify({ tag_name: tag, target_commitish: 'main', name: '投稿案づくりの依頼', body: 'iPhoneから依頼（自動で消えます）' }) });
+    if (!res.ok) throw new Error(`クラウドのClaudeを呼び出せませんでした（${res.status}）`);
+  }
+
   /* ---------- データ ---------- */
   const D = { state: null, actions: { items: [] }, results: {}, loadedAt: null };
   let posts = [];
@@ -178,16 +185,22 @@
   views.drafts = () => {
     const drafts = posts.filter((p) => p.status === 'draft').sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
     const waiting = posts.filter((p) => p.status === 'rejected' && p.regen === 'waiting').length;
-    const gen = (D.actions.items || []).filter((a) => a.type === 'generate' && !(D.state.applied || []).includes(a.id));
+    // クラウドのClaudeに頼んだ投稿案づくりの様子: 最後の依頼より後に投稿案が届いていなければ「作成中」
+    const acts = D.actions.items || [];
+    const lastGen = acts.filter((a) => a.type === 'generate').map((a) => a.at).sort().pop();
+    const lastDone = acts.filter((a) => a.type === 'add_drafts').map((a) => a.at).sort().pop();
+    const working = lastGen && (!lastDone || lastDone < lastGen);
+    const stuck = working && Date.now() - new Date(lastGen).getTime() > 60 * 60 * 1000;
     return `
       ${justConnected && !STANDALONE ? '<div class="banner good">つながりました。共有ボタン（□に↑）から「ホーム画面に追加」すると、アプリのように使えます。</div>' : ''}
       <div class="card">
         <h2>新しい投稿案</h2>
-        <div class="muted" style="font-size:13px">投稿案はPCのClaudeが作ります。PCが閉じていても頼んでおけば、PCが起動したときに作り始めます（10〜20分ほど）。</div>
-        ${gen.length ? `<div class="banner" style="margin:10px 0 0">${fmtDT(gen[gen.length - 1].at)} に頼みました。PCが起動したら作り始めます。</div>`
-          : `<div class="actions"><button class="btn" data-generate>投稿案を作ってもらう</button></div>`}
+        <div class="muted" style="font-size:13px">クラウドのClaudeが、Notionの材料とフィードバックのルールを読んで10本作ります。PCが閉じていても作れます（20〜40分ほど）。${waiting ? `作り直し待ちの${waiting}件も、先に作り直します。` : ''}</div>
+        ${working && !stuck ? `<div class="banner" style="margin:10px 0 0">${fmtDT(lastGen)} から作っています。できたら、ここに届きます。</div>`
+          : `${stuck ? '<div class="banner bad" style="margin:10px 0 0">前回の依頼から1時間たっても届いていません。うまくいかなかった可能性があります。もう一度お試しください。</div>' : ''}
+            <div class="actions"><button class="btn" data-generate>投稿案を作ってもらう</button></div>`}
+        ${lastDone && !working ? `<div class="note">前回届いた時刻: ${fmtDT(lastDone)}</div>` : ''}
       </div>
-      ${waiting ? `<div class="banner">作り直し待ちが${waiting}件あります。PCのダッシュボードで「作り直す」を押すと作り直されます。</div>` : ''}
       <div class="sec">承認待ち（${drafts.length}件）</div>
       ${drafts.length ? drafts.map((p) => `
         <div class="card">
@@ -263,7 +276,7 @@
       <ol class="steps">
         <li>承認・予約・時刻変更・取り消し・却下・手直し・今すぐ投稿は、PCが閉じていてもできます</li>
         <li>予約できる時刻は、いつもの投稿時間（${esc(((D.state && D.state.post_times) || []).join('・'))}）か「今すぐ」です。ほかの時刻はPCで選んでください</li>
-        <li>新しい投稿案は、PCが起動しているときに作られます</li>
+        <li>新しい投稿案も、PCが閉じていてもクラウドのClaudeが作ります（Claudeのプランの利用枠を使います）</li>
         <li>予約時刻から6時間以上遅れた投稿は、勝手に出さずに「要確認」で止めます</li>
       </ol>
     </div>
@@ -436,7 +449,10 @@
       if (!confirm('Threadsアプリで、この投稿が出ていることを確かめましたか？「投稿済み」にします')) return;
       return act({ type: 'confirm_posted', post_id: d.confirm }, '投稿済みにしました');
     }
-    if (d.generate !== undefined) return act({ type: 'generate' }, 'PCが起動したら投稿案を作り始めます');
+    if (d.generate !== undefined) {
+      if (!confirm('クラウドのClaudeに、投稿案づくりを頼みます（Claudeのプランの利用枠を使います）。よろしいですか？')) return;
+      return act({ type: 'generate' }, '頼みました。20〜40分ほどで届きます', { after: startGenerate });
+    }
     if (d.logout !== undefined) {
       if (!confirm('このiPhoneから合鍵を消します。もう一度使うときは、合鍵を作り直して登録します。よろしいですか？')) return;
       cfg = {};
